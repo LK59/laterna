@@ -135,6 +135,12 @@ function movie(c: string, daysAgo: number, over: Record<string, unknown> = {}) {
 const enqueuedIds = () => svc.enqueued.filter((j) => !j.rebindIfSameDuration).map((j) => j.itemId);
 
 beforeEach(() => {
+  // L'horloge du test est NOW : `scanAction("run")` relance un tour sans date (`scanTick()`), donc à
+  // l'heure réelle. Quinze jours après NOW (24/11/2026), « 2 » sortait des arrivées des 14 derniers
+  // jours et deux tests échouaient selon le jour du passage. Seule `Date` est figée : les minuteries
+  // (le délai de 5 s de `scanAction`) restent réelles.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   vi.clearAllMocks();
   __testing.reset();
   wipeScanStore();
@@ -157,6 +163,10 @@ beforeEach(() => {
   delete process.env.XRAY_LIBRARY_ROOTS;
   vi.unstubAllEnvs();
   play.wait = false;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("quand personne ne regarde", () => {
