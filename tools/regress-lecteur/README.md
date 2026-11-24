@@ -154,6 +154,63 @@ Chaque dossier de résultats contient `brut.json` (lignes telles qu'écrites, is
 exercé), `plan.json` (les couples profil × titre prévus) et, en cas d'échec d'une étape, une
 capture d'écran.
 
+## Banc de stabilité
+
+Le banc de comparaison dit si une version **se comporte comme** la précédente, sur un réseau local et
+un parcours calme. Le banc de stabilité dit si le lecteur **tient** quand on le malmène, et rend un
+verdict seul, par des seuils, avec ou sans passage de référence (24/11/2026). Même mécanique : image
+du commit, instance jetable sans tâches de fond, compte de test, nettoyage même en cas d'échec.
+
+```sh
+export REGRESS_WORK=~/.cache/cine-regress/work
+export REGRESS_CREDS=~/.cache/cine-regress/claude-test.txt   # user=… / password=…, mode 600
+tools/regress-lecteur/regress.sh stabilite <commit> <dossier> [dossier d'un passage de référence]
+# REGRESS_PHASES=rafale,reprise : seulement ces phases
+```
+
+Quatre phases, trois profils chacune (Chromium, Firefox, iPhone émulé), sur des titres que chaque
+moteur lit par le remux (le lecteur serveur n'est pas ce qu'on éprouve ici) :
+
+| Phase | Réseau | Parcours | Ce qu'elle éprouve |
+|---|---|---|---|
+| `reseau-lent` | 8 Mb/s, 120 ± 30 ms, 0,3 % de pertes | le parcours court | sauts, piste, arrière-plan sur un lien de téléphone ; *L'Exorciste* (12 Mb/s) dépasse le lien : attentes et version allégée |
+| `reseau-instable` | en boucle : 25 s à 30 Mb/s, 12 s à 2 Mb/s avec 250 ms et 2 % de pertes, 3 s de coupure | le parcours court | le profil d'un lien mobile qui s'effondre puis revient (Drive du 24/11/2026) : requêtes relancées, reprises après coupure |
+| `rafale` | local | 30 sauts à 250–700 ms (touches ±10 s, un clic loin sur six), un changement de piste pris dans 5 sauts, 15 touches à 150 ms, 6 pauses en série, puis 10 s de film | les courses entre requêtes, reconstructions et sauts qu'aucun spectateur calme ne provoque |
+| `reprise` | 15 Mb/s, 80 ms | une position laissée à 45 %, puis deux réouvertures, cache des films vidé (OPFS) et page rechargée, dans le même navigateur — son code de l'app en cache, comme un appareil qui a déjà ouvert l'app : appui dès que la fiche montre « Reprendre », et après 3 s de fiche | le temps jusqu'à la première image d'une reprise sans rien sur l'appareil — **mesuré par le lecteur** (`firstMoveMs` de sa ligne `opening`) — et la **justesse** de la position (à moins de 30 s de celle laissée) |
+
+**Le bridage** est posé par `tc netem` depuis un petit conteneur (`cine-regress-tc:1`, Alpine +
+iproute2, construit au premier passage) qui partage l'espace réseau de l'instance — lui seul a
+`NET_ADMIN`. Un filtre ne bride que le trafic vers la passerelle du réseau Docker, par où arrive le port
+publié, donc le navigateur : Jellyfin reste joint à pleine vitesse, comme en production où c'est le
+lien du spectateur qui est lent. Les mêmes conditions pour les quatre moteurs (le bridage de Chromium
+par le protocole de débogage n'existe ni dans Firefox ni dans WebKit).
+
+**Le rapport** (`stabilite-rapport.py`, écrit dans `<dossier>/rapport.md` et affiché) donne par séance :
+la première image, les sauts (nombre, médian, le plus long), les attentes, reconstructions et blocages,
+d'où l'ouverture a lu, la retombée de chaque rafale et le temps et l'écart de chaque reprise. Verdict :
+
+- **ÉCHEC** (sortie 1) : une étape en délai dépassé, bloquée ou en exception, une ligne `error`, un
+  relais au lecteur serveur que le lien n'explique pas, une reprise à plus de 30 s de la position laissée ;
+- **à regarder** : un saut au-delà du seuil de sa phase (30 s sur lien lent, 45 s sur lien instable,
+  15 s en local), une rafale qui repart en plus de 15 s, une reprise de plus de 12 s, un blocage sur
+  réseau correct, une erreur JavaScript de la page ou du serveur, un relais pour lien lent, et — avec une
+  référence — ce qui est plus de 1,5 fois et 2 s plus lent qu'elle, ou deux reconstructions ou blocages
+  de plus.
+
+Le temps appui → image, gardé dans `brut.json`, n'est pas celui de la reprise : il compte l'attente de
+Playwright sur l'animation de la fiche (3 à 5 s) et, au premier film du navigateur, le chargement du code
+du lecteur (~3 s à 15 Mb/s) — relevé requête par requête le 24/11/2026. Un premier passage ouvrait chaque
+reprise dans un navigateur neuf et mesurait 14 à 22 s pour des reprises de 1 à 9 s.
+
+**Référence** : `~/.cache/cine-regress/stab-ref-<commit>` (premier passage : 10.68.0, `1e88faf3`, 24/11/2026 —
+7 ok, 5 à regarder, 0 échec ; durée ~22 min). Les « à regarder » de ce passage sont des comportements
+voulus ou attendus : version allégée demandée sur lien lent ou instable (*L'Exorciste* 12 Mb/s sur 8 Mb/s,
+*Arthur* 20 Mb/s), et des reprises de 9 à 15 s pour des fichiers dont le débit égale ou dépasse le lien
+(*Braveheart* 15,5 Mb/s, *Arthur* 20 Mb/s, sur 15 Mb/s).
+
+Chaque phase garde aussi son `brut.json` et son `normalise.json` : `regress.sh compare` s'applique phase
+par phase entre deux passages, comme pour le banc de comparaison.
+
 ## Ce qui est comparé
 
 Gardé : le genre et l'ordre des lignes (`start`, `opening`, `seek`, `audio`, `rebuild`, `network`,
@@ -256,11 +313,12 @@ l'épisode en MP2 dans Firefox. Rare en production (deux lignes dans le journal 
   Chromium n'a pas de décodeur HEVC sans GPU (le canal `chrome` stable non plus, vérifié) : tout
   fichier HEVC y part au lecteur serveur. Ce qu'un moteur réel refuse ou accepte sur un appareil
   reste à voir sur l'appareil.
-- **Le parcours est un parcours.** Il n'essaie ni les rafales de sauts, ni la diffusion, ni le
+- **Le parcours est un parcours.** Il n'essaie ni les rafales de sauts (voir « Banc de stabilité »), ni la diffusion, ni le
   hors-ligne, ni les longues lectures (le banc d'appareil du panneau Compte, DOC-TECH « Device test
   bench », mesure l'horloge et les images ; celui-ci compare des comportements).
 - **Le réseau est local** : aucune ligne `network`, aucun choix de qualité plus légère, presque
-  jamais d'attente. Un défaut qui ne paraît que sur un lien lent n'y paraît pas.
+  jamais d'attente. Un défaut qui ne paraît que sur un lien lent n'y paraît pas — le banc de
+  stabilité bride le lien pour cela.
 - **Le lecteur serveur dépend de Jellyfin** (transcodage en direct) : ses temps varient, et une
   machine chargée peut faire dépasser un délai.
 - **La bibliothèque change** : un titre retiré de `titres.json` ou du catalogue est noté « absent du

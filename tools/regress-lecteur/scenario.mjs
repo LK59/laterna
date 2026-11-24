@@ -36,6 +36,14 @@ const inPlan = (profile, key) => (PLAN.length ? PLAN.includes(`${profile}/${key}
  * sur `stop`), horloge du son (`audioSync`), mémoire de la page (Chromium) relevée toutes les 30 s.
  */
 const ENDURANCE_MIN = Number(process.env.ENDURANCE_MIN || 0);
+/**
+ * Le banc de stabilité (24/11/2026, `regress.sh stabilite`, README « Banc de stabilité ») : `reseau` joue
+ * le parcours court tel quel (c'est le lien, bridé par regress.sh, qui change) ; `rafale` enchaîne des
+ * sauts sans attendre leur issue, un changement de piste pris dans des sauts, des pauses en série ;
+ * `reprise` laisse une position sur le compte de test puis rouvre le titre au milieu, dans un navigateur
+ * neuf — aussitôt la fiche ouverte, puis après 3 s de fiche — et vérifie qu'il repart au bon endroit.
+ */
+const STAB = process.env.STAB || "";
 const LOGS = "/logs";
 const OUT = "/out";
 
@@ -756,6 +764,272 @@ async function enduranceCase(browser, def, state, profile, title) {
   }
 }
 
+/** Un tirage reproductible par titre : deux passages du même titre font les mêmes gestes. */
+function seeded(text) {
+  let s = [...text].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+}
+
+/** Un clic sur la barre de progression sans attendre le saut — la moitié d'une rafale. */
+async function clickBar(page, profile, fraction) {
+  await showControls(page, profile);
+  const box = await page.locator('[data-chrome] input[type="range"]').last().boundingBox().catch(() => null);
+  if (!box) return false;
+  await page.mouse.click(box.x + box.width * fraction, box.y + box.height / 2);
+  return true;
+}
+
+/** Ferme le lecteur par sa croix et attend la ligne `stop` ; rend vrai si elle est venue. */
+async function closePlayer(page, profile) {
+  await showControls(page, profile);
+  const close = page.locator('[data-player-nav="close"]');
+  if (!(await close.first().isVisible().catch(() => false))) return false;
+  const closeFrom = logSize("player.log");
+  await press(page, profile, close.first());
+  const stop = await waitLogLine(closeFrom, (l) => l.kind === "stop", 10000);
+  await waitLogsQuiet(500, 3000);
+  return !!stop;
+}
+
+async function newCasePage(browser, def, state) {
+  const ctx = await browser.newContext({ ...def.ctx, storageState: state, locale: "fr-FR", timezoneId: "Europe/Paris" });
+  await ctx.addInitScript(() => {
+    try {
+      sessionStorage.setItem("cine:onboarding-skipped", String(Date.now()));
+    } catch {}
+  });
+  const page = await ctx.newPage();
+  return { ctx, page };
+}
+
+/**
+ * Sauts en rafale : ce qu'un spectateur impatient fait, et ce qu'aucun parcours ne fait — des gestes
+ * qui partent avant que le précédent ait abouti. Chaque série est jugée sur une seule chose : le film
+ * repart-il, et en combien de temps. Les lignes du journal disent le reste (reconstructions, erreurs).
+ */
+async function burstCase(browser, def, state, profile, title) {
+  const cx = caseCtx.getStore();
+  const steps = [];
+  const t0 = cx.t0;
+  const rand = seeded(`${profile}/${title.key}`);
+  const step = (name, outcome, extra) => {
+    steps.push({ step: name, outcome, ...(extra || {}) });
+    mark(name);
+    console.log(`  ${Math.round((Date.now() - t0) / 1000)} s ${name}: ${outcome}`);
+  };
+  const { ctx, page } = await newCasePage(browser, def, state);
+  cx.agent = await page.evaluate(() => navigator.userAgent).catch(() => null);
+  const consoleErrors = [];
+  page.on("pageerror", (e) => consoleErrors.push(String(e.message).split("\n")[0].slice(0, 200)));
+  const done = (how) => ({ steps, timings: cx.timings, consoleErrors, how, forcedClicks: cx.forcedClicks, ms: Date.now() - t0 });
+  /** Attend que le film reparte après une série ; rend l'issue et le temps de retombée. */
+  const settleAfter = async (name, extra) => {
+    const from = Date.now();
+    const v = await waitPlaying(page, 60000, 0.8);
+    step(name, v ? "fait" : "délai dépassé", { retombeeMs: Date.now() - from, ...(extra || {}) });
+    return !!v;
+  };
+  try {
+    const how = await openTitle(page, profile, title);
+    step("ouvrir", how ? "fait" : "échec");
+    if (!how) return done(null);
+    await settle(page, 3);
+
+    // Série 1 : trente gestes, 250 à 700 ms d'écart — touches ±10 s, et un clic loin sur la barre sur six.
+    let far = 0;
+    for (let i = 0; i < 30; i++) {
+      if (i % 6 === 5) {
+        await clickBar(page, profile, 0.1 + rand() * 0.75);
+        far++;
+      } else await page.keyboard.press(rand() < 0.5 ? "ArrowRight" : "ArrowLeft");
+      await sleep(250 + Math.floor(rand() * 450));
+    }
+    if (!(await settleAfter("rafale de 30 sauts", { loin: far }))) return done(how);
+    await settle(page, 3);
+
+    // Un changement de piste son pris dans cinq sauts : la reconstruction et les sauts se croisent.
+    const audio = await menuChoose(page, profile, "audio", (rows) => rows.find((r) => !r.on));
+    for (let i = 0; i < 5; i++) {
+      await sleep(300);
+      await page.keyboard.press(i % 2 ? "ArrowLeft" : "ArrowRight");
+    }
+    if (!(await settleAfter("piste son + 5 sauts", { piste: audio.outcome }))) return done(how);
+    await settle(page, 3);
+
+    // Série 2 : quinze touches à 150 ms — la touche tenue enfoncée.
+    for (let i = 0; i < 15; i++) {
+      await page.keyboard.press(rand() < 0.7 ? "ArrowRight" : "ArrowLeft");
+      await sleep(150);
+    }
+    if (!(await settleAfter("15 sauts à 150 ms"))) return done(how);
+    await settle(page, 2);
+
+    // Six pauses/reprises à 200 ms : un nombre pair, le film doit finir en lecture.
+    for (let i = 0; i < 6; i++) {
+      await page.keyboard.press("k");
+      await sleep(200);
+    }
+    if (!(await settleAfter("6 pauses en série"))) return done(how);
+
+    // Le film tient-il ensuite ? Dix secondes de film d'affilée.
+    step("lecture après", (await settle(page, 10, 40000)) ? "fait" : "bloquée");
+    await seekBar(page, profile, 0.003);
+    step("fermer", (await closePlayer(page, profile)) ? "fait" : "absent");
+    return done(how);
+  } catch (e) {
+    step("exception", String(e.message).split("\n")[0].slice(0, 160));
+    await page.screenshot({ path: `${OUT}/${profile}-${title.key}-exception.png` }).catch(() => {});
+    return done(null);
+  } finally {
+    await ctx.close().catch(() => {});
+  }
+}
+
+/**
+ * Le bouton « Reprendre » de la fiche ouverte, marqué pour être appuyé (même recherche que
+ * `findPlayButton`, sur le libellé de la reprise).
+ */
+async function findResumeButton(page) {
+  const found = await page
+    .evaluate(() => {
+      for (const el of document.querySelectorAll("[data-regress-pick]")) el.removeAttribute("data-regress-pick");
+      const roots = document.querySelectorAll("[data-sheet-morph-root]");
+      const dialogs = document.querySelectorAll('[role="dialog"]');
+      const scope = roots.length ? roots[roots.length - 1] : dialogs.length ? dialogs[dialogs.length - 1] : null;
+      if (!scope) return false;
+      const name = (b) => (b.getAttribute("aria-label") || b.innerText || "").trim().replace(/\s+/g, " ");
+      const hit = [...scope.querySelectorAll("button")]
+        .filter((b) => {
+          const r = b.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== "hidden";
+        })
+        .filter((b) => /^Reprendre/.test(name(b)))
+        .pop();
+      if (!hit) return false;
+      hit.setAttribute("data-regress-pick", "");
+      return true;
+    })
+    .catch(() => false);
+  return found ? page.locator("[data-regress-pick]") : null;
+}
+
+/**
+ * Les reprises : une position laissée au milieu du film, puis deux réouvertures — `direct`, appuyé dès
+ * que la fiche montre « Reprendre », et `fiche 3 s`, après trois secondes de fiche (la préparation par
+ * la fiche a eu lieu). Chacune mesure l'appui → la première image, et vérifie la position : à moins de
+ * 30 s de celle laissée (la reprise recule de quelques secondes).
+ *
+ * Comme un spectateur qui a vidé le cache de l'app : le **même** navigateur (son code déjà chargé, comme
+ * celui d'un appareil qui a déjà ouvert l'app), mais le stockage de l'appareil vidé (OPFS : les débuts de
+ * films gardés) et la page rechargée (la mémoire : relais, morceaux préparés). Le premier passage
+ * (24/11/2026) ouvrait chaque reprise dans un navigateur neuf : ~10 s de code de l'app téléchargé à
+ * travers le lien bridé avant que le lecteur existe — rien de ce qu'un spectateur vit.
+ */
+async function resumeCase(browser, def, state, profile, title) {
+  const cx = caseCtx.getStore();
+  const steps = [];
+  const t0 = cx.t0;
+  const step = (name, outcome, extra) => {
+    steps.push({ step: name, outcome, ...(extra || {}) });
+    mark(name);
+    console.log(`  ${Math.round((Date.now() - t0) / 1000)} s ${name}: ${outcome}${extra ? " " + JSON.stringify(extra) : ""}`);
+  };
+  const consoleErrors = [];
+  const done = (how) => ({ steps, timings: cx.timings, consoleErrors, how, forcedClicks: cx.forcedClicks, ms: Date.now() - t0 });
+  let how = null;
+  let left = null;
+  {
+    // La position laissée : ouvert du début, saut à 45 %, quelques secondes de film, fermé.
+    const { ctx, page } = await newCasePage(browser, def, state);
+    cx.agent = await page.evaluate(() => navigator.userAgent).catch(() => null);
+    page.on("pageerror", (e) => consoleErrors.push(String(e.message).split("\n")[0].slice(0, 200)));
+    try {
+      how = await openTitle(page, profile, title);
+      if (how) {
+        await settle(page, 2);
+        await seekBar(page, profile, 0.45);
+        await settle(page, 4);
+        left = (await video(page))?.t ?? null;
+        await closePlayer(page, profile);
+      }
+      step("position laissée", left !== null ? "fait" : "échec", left !== null ? { at: Math.round(left) } : {});
+    } catch (e) {
+      step("exception", String(e.message).split("\n")[0].slice(0, 160));
+    } finally {
+      await ctx.close().catch(() => {});
+    }
+  }
+  if (left === null) return done(how);
+  const variants = [["direct", 0], ["fiche 3 s", 3000]];
+  // Un navigateur pour les deux réouvertures : son code de l'app reste en cache (HTTP, service worker).
+  const { ctx, page } = await newCasePage(browser, def, state);
+  page.on("pageerror", (e) => consoleErrors.push(String(e.message).split("\n")[0].slice(0, 200)));
+  // Le code de l'app, chargé une fois comme sur un appareil qui l'a déjà ouverte.
+  await page.goto(`${BASE}/`, { waitUntil: "load" }).catch(() => {});
+  await waitLogsQuiet(1000, 8000);
+  for (const [variant, dwell] of variants) {
+    const last = variant === variants[variants.length - 1][0];
+    try {
+      // « Vider le cache » : les débuts de films gardés sur l'appareil (OPFS) ; la navigation qui suit
+      // vide la mémoire de la page.
+      await page
+        .evaluate(async () => {
+          const root = await navigator.storage.getDirectory();
+          for await (const [name] of root.entries()) await root.removeEntry(name, { recursive: true });
+        })
+        .catch(() => {});
+      let startupSent = false;
+      page.on("request", (r) => {
+        if (r.url().includes("/api/startup-timing")) startupSent = true;
+      });
+      // Une vraie navigation (pas un simple changement de #) : la page repart de zéro en mémoire.
+      await page.goto("about:blank").catch(() => {});
+      await page.goto(`${BASE}/${title.hash}`, { waitUntil: "load" });
+      const startupUntil = Date.now() + 20000;
+      while (!startupSent && Date.now() < startupUntil) await sleep(POLL);
+      let button = null;
+      const findUntil = Date.now() + 30000;
+      while (!button && Date.now() < findUntil) {
+        button = await findResumeButton(page);
+        if (!button) await sleep(200);
+      }
+      if (!button) {
+        step(`reprise ${variant}`, "bouton absent");
+        await page.screenshot({ path: `${OUT}/${profile}-${title.key}-reprise.png` }).catch(() => {});
+        continue;
+      }
+      if (dwell) {
+        await sleep(dwell);
+        button = await findResumeButton(page);
+      }
+      const pressedAt = Date.now();
+      const pressFrom = logSize("player.log");
+      await press(page, profile, button);
+      const first = await waitPlaying(page, 90000, 0.4);
+      const ms = Date.now() - pressedAt;
+      const ecart = first ? Math.round(first.t - left) : null;
+      const ok = first && Math.abs(first.t - left) <= 30;
+      // La séance du lecteur : le rapport y lit sa propre mesure (`firstMoveMs` de sa ligne `opening`).
+      const session = playerLinesSince(pressFrom).find((l) => l.kind === "start")?.session ?? null;
+      step(`reprise ${variant}`, !first ? "délai dépassé" : ok ? "fait" : "mauvaise position", { ms, at: first ? Math.round(first.t) : null, ecart, session });
+      if (first) {
+        await settle(page, 3);
+        left = (await video(page))?.t ?? left;
+      }
+      // La dernière réouverture repart près du début avant de fermer : aucune reprise ne reste sur le compte.
+      if (last && first) await seekBar(page, profile, 0.003);
+      await closePlayer(page, profile);
+    } catch (e) {
+      step("exception", String(e.message).split("\n")[0].slice(0, 160));
+    }
+  }
+  await ctx.close().catch(() => {});
+  return done(how);
+}
+
 const results = [];
 
 async function runCase(browser, def, state, profile, version, title) {
@@ -767,7 +1041,14 @@ async function runCase(browser, def, state, profile, version, title) {
     logFrom: { player: logSize("player.log"), server: logSize("server.log") },
   };
   return caseCtx.run(cx, async () => {
-    const r = ENDURANCE_MIN > 0 ? await enduranceCase(browser, def, state, profile, title) : await playCase(browser, def, state, profile, title);
+    const r =
+      STAB === "rafale"
+        ? await burstCase(browser, def, state, profile, title)
+        : STAB === "reprise"
+          ? await resumeCase(browser, def, state, profile, title)
+          : ENDURANCE_MIN > 0
+            ? await enduranceCase(browser, def, state, profile, title)
+            : await playCase(browser, def, state, profile, title);
     // Ce que la fermeture de la page envoie encore (un `stop` de page fermée) : le journal au calme.
     await waitLogsQuiet(1000, 3000);
     const out = {

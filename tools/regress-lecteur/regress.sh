@@ -3,6 +3,8 @@
 #
 #   regress.sh run <ref> <dossier de résultats>   construit, lance, joue, recueille, nettoie
 #   regress.sh compare <résultats A> <résultats B> diff des lignes normalisées, sortie ≠ 0 si écart
+#   regress.sh stabilite <ref> <dossier> [référence]  banc de stabilité : réseau bridé, rafales de
+#                                                  sauts, reprises ; rapport et verdict (README)
 #
 # Étapes séparées, pour itérer :
 #   regress.sh build <ref> | start <ref> | play <ref> <dossier> | stop <ref> | clean <ref>
@@ -138,6 +140,7 @@ play() {
     -v "$HERE:/tool:ro" -v "$CREDS:/creds.txt:ro" -v "$data/logs:/logs:ro" -v "$out:/out" \
     -e BASE="http://localhost:$PORT" -e PROFILES="${REGRESS_PROFILES:-chromium firefox webkit iphone}" \
     -e TITLES="/tool/${REGRESS_TITLES:-titres.json}" -e ONLY="${REGRESS_ONLY:-}" -e PLAN="${REGRESS_PLAN:-}" -e ENDURANCE_MIN="${REGRESS_ENDURANCE_MIN:-}" \
+    -e STAB="${REGRESS_STAB:-}" \
     -w /w "$PW_IMAGE" sh -c "cp /tool/scenario.mjs /w/ && node /w/scenario.mjs"
   python3 -I "$HERE/normalise.py" "$out"
 }
@@ -159,6 +162,67 @@ clean() {
   fi
 }
 
+# --- Banc de stabilité (README, « Banc de stabilité ») -------------------------------------------
+# Le lien entre l'instance et le navigateur est bridé par `tc netem`, posé depuis un conteneur jetable qui
+# partage l'espace réseau de l'instance (NET_ADMIN pour lui seul ; l'instance garde `--cap-drop ALL`).
+# Seul le trafic vers la passerelle du réseau Docker est touché — c'est par elle qu'arrive le port publié,
+# donc le navigateur ; Jellyfin et les autres services restent joints à pleine vitesse.
+NET_IMAGE="cine-regress-tc:1"
+net_image() {
+  docker image inspect "$NET_IMAGE" >/dev/null 2>&1 && return 0
+  printf 'FROM alpine:3.22\nRUN apk add --no-cache iproute2\n' | docker build -q -t "$NET_IMAGE" - >/dev/null
+}
+# net_set <ref> <arguments netem | off>
+net_set() {
+  local sha; sha="$(slug "$1")"; shift
+  local gw; gw="$(docker network inspect "$NETWORK" --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}')"
+  docker run --rm --name "cine-regress-tc-$sha-$RANDOM" --net "container:$(container_of "$sha")" --cap-add NET_ADMIN "$NET_IMAGE" sh -c "
+    if [ \"\$1\" = off ]; then tc qdisc del dev eth0 root 2>/dev/null; exit 0; fi
+    if tc qdisc show dev eth0 | grep -q 'netem 30:'; then tc qdisc change dev eth0 parent 1:3 handle 30: netem \$*
+    else tc qdisc add dev eth0 root handle 1: prio && tc qdisc add dev eth0 parent 1:3 handle 30: netem \$* &&
+      tc filter add dev eth0 parent 1:0 protocol ip prio 1 u32 match ip dst $gw/32 flowid 1:3; fi" sh "$@"
+}
+# Le lien instable, en boucle tant que le fichier témoin existe : 25 s correctes, 12 s très lentes,
+# 3 s de coupure — le profil du Drive du 24/11/2026 (débit qui s'effondre puis revient).
+net_unstable_loop() {
+  local ref="$1" flag="$2"
+  while [ -f "$flag" ]; do
+    net_set "$ref" delay 40ms 10ms rate 30mbit; sleep 25; [ -f "$flag" ] || break
+    net_set "$ref" delay 250ms 60ms loss 2% rate 2mbit; sleep 12; [ -f "$flag" ] || break
+    net_set "$ref" loss 100%; sleep 3
+  done
+}
+# Les phases : nom, genre de parcours (scenario.mjs, STAB), bridage, plan.
+STAB_PHASES=(
+  "reseau-lent|reseau|delay 120ms 30ms loss 0.3% rate 8mbit|chromium/kissing-booth,firefox/exorciste,iphone/aftersun"
+  "reseau-instable|reseau|instable|chromium/kissing-booth,firefox/arthur,iphone/aftersun"
+  "rafale|rafale|off|chromium/kissing-booth,firefox/braveheart,iphone/arthur"
+  "reprise|reprise|delay 80ms 20ms rate 15mbit|chromium/kissing-booth,firefox/braveheart,iphone/arthur"
+)
+stabilite() {
+  local ref="$1" out="$2" baseline="${3:-}"
+  mkdir -p "$out"; out="$(cd "$out" && pwd)"
+  net_image
+  local flag="$WORK/net-instable-$(slug "$ref")"
+  for entry in "${STAB_PHASES[@]}"; do
+    IFS='|' read -r name kind shaping plan <<<"$entry"
+    if [ -n "${REGRESS_PHASES:-}" ] && ! [[ ",$REGRESS_PHASES," == *",$name,"* ]]; then continue; fi
+    echo "== phase $name ($shaping)"
+    net_set "$ref" off
+    local loop=""
+    if [ "$shaping" = instable ]; then
+      touch "$flag"; net_unstable_loop "$ref" "$flag" & loop=$!
+    elif [ "$shaping" != off ]; then
+      # shellcheck disable=SC2086
+      net_set "$ref" $shaping
+    fi
+    REGRESS_STAB="$kind" REGRESS_PLAN="$plan" play "$ref" "$out/$name" || echo "phase $name : le parcours a échoué" >&2
+    if [ -n "$loop" ]; then rm -f "$flag"; kill "$loop" 2>/dev/null || true; wait "$loop" 2>/dev/null || true; fi
+    net_set "$ref" off
+  done
+  python3 -I "$HERE/stabilite-rapport.py" "$out" ${baseline:+"$baseline"}
+}
+
 case "${1:-}" in
   build) build "$2" ;;
   start) start "$2" ;;
@@ -175,5 +239,14 @@ case "${1:-}" in
     echo "durée : $(( $(date +%s) - t0 )) s"
     ;;
   compare) python3 -I "$HERE/compare.py" "$2" "$3" ;;
-  *) sed -n '2,13p' "$0"; exit 2 ;;
+  stabilite)
+    REF="$2"
+    trap 'rm -f "$WORK/net-instable-$(slug "$REF")"; clean "$REF"' EXIT
+    t0=$(date +%s)
+    build "$2"; start "$2"
+    rc=0; stabilite "$2" "$3" "${4:-}" || rc=$?
+    echo "durée : $(( $(date +%s) - t0 )) s"
+    exit "$rc"
+    ;;
+  *) sed -n '2,15p' "$0"; exit 2 ;;
 esac
