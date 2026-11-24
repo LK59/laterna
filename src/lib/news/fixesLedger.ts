@@ -1594,6 +1594,19 @@ export const FIXES_LEDGER: FixLedgerEntry[] = [
       },
     ],
   },
+  {
+    version: "10.68.1",
+    page: "10.60",
+    group: { fr: "Téléchargements", en: "Downloads", es: "Descargas", de: "Downloads" },
+    items: [
+      {
+        fr: "Un téléchargement ouvert juste après en avoir fermé un autre ne s'arrête plus sur « Lecture impossible » : le lecteur réessaie de lui-même.",
+        en: "A download opened right after closing another no longer stops on “Playback failed”: the player tries again on its own.",
+        es: "Una descarga abierta justo después de cerrar otra ya no se queda en «Reproducción imposible»: el reproductor lo vuelve a intentar solo.",
+        de: "Ein Download, der direkt nach dem Schließen eines anderen geöffnet wird, bleibt nicht mehr bei „Wiedergabe nicht möglich“ stehen: Der Player versucht es selbst erneut.",
+      },
+    ],
+  },
 ];
 
 /** « 8.64.1 » > « 8.64 » : comparées nombre par nombre, une partie absente valant 0. */

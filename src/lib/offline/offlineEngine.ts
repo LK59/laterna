@@ -45,6 +45,11 @@ export interface OfflineEngineEvents {
 /** Une minute d'avance : ~15 Mo à 2 Mb/s, ~30 Mo à 4 Mb/s — loin des plafonds de WebKit (105 Mo). */
 const AHEAD_S = 60;
 const BEHIND_S = 30;
+/** L'attente de l'en-tête confié, puis le répit avant l'unique nouvel essai (`open`). */
+const APPEND_INIT_MS = 10_000;
+const RETRY_ATTACH_MS = 2_000;
+/** Le pire d'une ouverture qui finit par passer : lecture, index, deux attachements et le répit. */
+export const OFFLINE_OPEN_GUARD_MS = 40_000;
 
 type MediaSourceLike = MediaSource;
 
@@ -132,6 +137,34 @@ export class OfflineEngine {
     this.stage = "index des fragments";
     await within(this.rescan(), 20_000, this.stage);
 
+    try {
+      await this.attach(init);
+    } catch (error) {
+      // Un en-tête que le navigateur ne prend pas en 10 s, ouvert juste après la fermeture d'une autre
+      // lecture (iPad sous Chrome, 24/11/2026 : trois fois en une soirée, 4 à 12 s après un « close », et
+      // un nouvel essai une minute plus tard passait) : on démonte cette MediaSource, on laisse 2 s au
+      // navigateur pour libérer la précédente, et on recommence une fois. Un refus franc ne repasse pas.
+      if (!(error instanceof Error) || !error.message.startsWith("bloqué à l'étape « en-tête") || this.closed) throw error;
+      this.events.trace?.("hors ligne : en-tête sans réponse en 10 s — MediaSource démontée, nouvel essai dans 2 s");
+      this.detach();
+      await new Promise((r) => setTimeout(r, RETRY_ATTACH_MS));
+      if (this.closed) throw error;
+      await this.attach(init);
+    }
+    this.stage = "premier fragment";
+    this.events.trace?.(`hors ligne : ouvert, ${this.fragments.length} fragments sur l'appareil, ${init.mime}`);
+    this.video.addEventListener("timeupdate", this.onTime);
+    this.video.addEventListener("seeking", this.onSeeking);
+    if (startAt > 0) this.video.currentTime = startAt;
+    this.settled = startAt;
+    this.nextIndex = Math.max(0, fragmentIndexAt(this.fragments, startAt));
+    this.seekFrom = startAt > 0 ? startAt : undefined;
+    void this.pump();
+    return init.mime;
+  }
+
+  /** Une MediaSource neuve attachée à l'élément, l'en-tête confié. */
+  private async attach(init: Fmp4Init): Promise<void> {
     this.stage = "ouverture de MediaSource";
     const mediaSource = createMediaSource();
     this.mediaSource = mediaSource;
@@ -155,17 +188,22 @@ export class OfflineEngine {
     this.stage = "en-tête confié au navigateur";
     this.buffer = mediaSource.addSourceBuffer(init.mime);
     if (this.duration && Number.isFinite(this.duration)) mediaSource.duration = this.duration;
-    await within(this.append(init.bytes), 10_000, this.stage);
-    this.stage = "premier fragment";
-    this.events.trace?.(`hors ligne : ouvert, ${this.fragments.length} fragments sur l'appareil, ${init.mime}`);
-    this.video.addEventListener("timeupdate", this.onTime);
-    this.video.addEventListener("seeking", this.onSeeking);
-    if (startAt > 0) this.video.currentTime = startAt;
-    this.settled = startAt;
-    this.nextIndex = Math.max(0, fragmentIndexAt(this.fragments, startAt));
-    this.seekFrom = startAt > 0 ? startAt : undefined;
-    void this.pump();
-    return init.mime;
+    await within(this.append(init.bytes), APPEND_INIT_MS, this.stage);
+  }
+
+  /** L'élément rendu à vide (comme `close`, sans fermer le moteur). */
+  private detach(): void {
+    try {
+      (this.video as HTMLVideoElement & { srcObject: unknown }).srcObject = null;
+      this.video.removeAttribute("src");
+      this.video.load();
+    } catch {
+      /* l'élément est déjà démonté */
+    }
+    if (this.url) URL.revokeObjectURL(this.url);
+    this.url = null;
+    this.buffer = null;
+    this.mediaSource = null;
   }
 
   /** Pour le panneau technique : le type confié à MediaSource et les fragments connus. */
@@ -356,16 +394,6 @@ export class OfflineEngine {
     this.closed = true;
     this.video.removeEventListener("timeupdate", this.onTime);
     this.video.removeEventListener("seeking", this.onSeeking);
-    try {
-      (this.video as HTMLVideoElement & { srcObject: unknown }).srcObject = null;
-      this.video.removeAttribute("src");
-      this.video.load();
-    } catch {
-      /* l'élément est déjà démonté */
-    }
-    if (this.url) URL.revokeObjectURL(this.url);
-    this.url = null;
-    this.buffer = null;
-    this.mediaSource = null;
+    this.detach();
   }
 }

@@ -25,7 +25,7 @@ import { usePlayerBackClose } from "@/lib/playerHistory";
 import { usePlayerFocus } from "@/lib/usePlayerFocus";
 import { deviceStore } from "@/lib/offline/deviceStore";
 import { markOfflineWatched, offlineAccount, offlineDownloadById, saveOfflinePosition, useOfflineDownloads } from "@/lib/offline/downloads";
-import { OfflineEngine } from "@/lib/offline/offlineEngine";
+import { OFFLINE_OPEN_GUARD_MS, OfflineEngine } from "@/lib/offline/offlineEngine";
 import { reportClientError } from "@/lib/reportClientError";
 import { usePlaybackSession } from "@/lib/usePlaybackSession";
 import { PLAYBACK_CLIENTS } from "@/lib/playbackClients";
@@ -204,10 +204,11 @@ export function OfflinePlayerHost({ session, mode }: { session: PlaybackSession;
         }, 15_000);
       })
       .catch((cause: unknown) => fail(cause instanceof Error ? cause.message : String(cause)));
-    // Ni ouvert ni en erreur au bout de vingt secondes : l'ouverture elle-même est bloquée.
+    // Ni ouvert ni en erreur à temps : l'ouverture elle-même est bloquée. Le délai laisse passer
+    // l'unique nouvel essai de l'en-tête (`OfflineEngine.open`) — vingt secondes l'auraient coupé.
     const openTimer = setTimeout(() => {
       if (!cancelled && engine.stage !== "premier fragment") fail(`ouverture bloquée à l'étape « ${engine.stage} »`);
-    }, 20_000);
+    }, OFFLINE_OPEN_GUARD_MS);
     return () => {
       cancelled = true;
       clearTimeout(openTimer);

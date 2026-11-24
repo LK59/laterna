@@ -90,3 +90,102 @@ describe("OfflineEngine", () => {
     engine.close();
   });
 });
+
+/**
+ * L'en-tête qui ne répond pas (iPad sous Chrome, 24/11/2026) : ouvert juste après la fermeture d'une
+ * autre lecture, le navigateur ne rendait jamais l'ajout de l'en-tête et l'écran disait « bloqué à
+ * l'étape en-tête confié au navigateur » ; un nouvel essai une minute plus tard passait. Le moteur
+ * démonte cette MediaSource et recommence une fois après 2 s — une seule.
+ */
+describe("OfflineEngine — en-tête sans réponse", () => {
+  const source = { read: async (o: number, l: number) => file.slice(o, Math.min(file.length, o + l)), available: () => file.length, complete: () => true };
+
+  /** Une MediaSource dont les `silent` premiers tampons ne rendent jamais leur premier ajout. */
+  function stubSilent(silent: number) {
+    let made = 0;
+    const loads: number[] = [];
+    class SilentFirst extends FakeMediaSource {
+      addSourceBuffer() {
+        const b = super.addSourceBuffer();
+        if (made++ < silent) b.appendBuffer = () => {};
+        return b;
+      }
+    }
+    vi.stubGlobal("MediaSource", SilentFirst);
+    return { made: () => made, loads };
+  }
+
+  it("recommence une fois, avec une MediaSource neuve, et ouvre", async () => {
+    vi.useFakeTimers();
+    try {
+      const stub = stubSilent(1);
+      const traces: string[] = [];
+      const video = fakeVideo();
+      const loads = vi.fn();
+      (video as unknown as { load: () => void }).load = loads;
+      const engine = new OfflineEngine(video, source, null, { onError: () => {}, trace: (l) => traces.push(l) });
+      const opened = engine.open(0);
+      await vi.advanceTimersByTimeAsync(10_000 + 2_000 + 100);
+      await expect(opened).resolves.toContain("video/mp4");
+      expect(stub.made()).toBe(2);
+      expect(loads).toHaveBeenCalledTimes(1); // la première MediaSource rendue avant la seconde
+      expect(engine.stage).toBe("premier fragment");
+      expect(traces.some((t) => t.includes("nouvel essai"))).toBe(true);
+      engine.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pas de troisième essai : deux silences font l'erreur nommée d'avant", async () => {
+    vi.useFakeTimers();
+    try {
+      const stub = stubSilent(2);
+      const engine = new OfflineEngine(fakeVideo(), source, null, { onError: () => {} });
+      const opened = engine.open(0);
+      const settled = opened.catch((e: Error) => e.message);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(settled).resolves.toBe("bloqué à l'étape « en-tête confié au navigateur »");
+      expect(stub.made()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("un refus franc du navigateur ne repasse pas", async () => {
+    class Refusing extends FakeMediaSource {
+      addSourceBuffer() {
+        const b = super.addSourceBuffer();
+        b.appendBuffer = () => setTimeout(() => b.dispatchEvent(new Event("error")), 1);
+        return b;
+      }
+    }
+    let made = 0;
+    class Counting extends Refusing {
+      constructor() {
+        super();
+        made++;
+      }
+    }
+    vi.stubGlobal("MediaSource", Counting);
+    const engine = new OfflineEngine(fakeVideo(), source, null, { onError: () => {} });
+    await expect(engine.open(0)).rejects.toThrow("le navigateur a refusé un fragment");
+    expect(made).toBe(1);
+  });
+
+  it("fermé pendant le répit : pas de second attachement", async () => {
+    vi.useFakeTimers();
+    try {
+      const stub = stubSilent(1);
+      const engine = new OfflineEngine(fakeVideo(), source, null, { onError: () => {} });
+      const settled = engine.open(0).catch((e: Error) => e.message);
+      await vi.advanceTimersByTimeAsync(10_500);
+      engine.close();
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(settled).resolves.toContain("bloqué à l'étape");
+      expect(stub.made()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

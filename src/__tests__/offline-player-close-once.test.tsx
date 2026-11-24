@@ -39,6 +39,7 @@ vi.mock("@/lib/swr", async (original) => ({
 }));
 vi.mock("@/lib/offline/deviceStore", () => ({ deviceStore: {}, deviceStoreSupported: () => true }));
 vi.mock("@/lib/offline/offlineEngine", () => ({
+  OFFLINE_OPEN_GUARD_MS: 40_000,
   OfflineEngine: class {
     stage = "premier fragment";
     open() {
