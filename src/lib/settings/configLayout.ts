@@ -102,8 +102,6 @@ export const CONFIG_LAYOUT = {
   /** Lecture : le lecteur intégré et son relais vers Jellyfin, rien d'autre. */
   playback: [
     { group: "playback", keys: ["PLAYER_ENABLED", "PLAYER_SERVER_FALLBACK"] },
-    // « Ouverture rapide » (§200) : marquée « Lab bêta », coupée par défaut — à essayer avant de la garder.
-    { group: "playback", keys: ["OPENING_LAB_ENABLED"], titleKey: "config.openingLab.title", whyKey: "config.openingLab.why", needs: ["playerOn"], lab: true },
   ],
   /** Diffusion et hors-ligne : le Chromecast, puis les téléchargements. */
   diffusion: [

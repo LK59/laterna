@@ -42,7 +42,8 @@ function fakeSource() {
   const source = {
     size: 100 << 20,
     close: vi.fn((leaveForNext?: boolean) => h.close(leaveForNext)),
-    closePrepared: vi.fn(),
+    // La vraie ferme la source (`close(false)`) et laisse ses morceaux sous la version du fichier.
+    closePrepared: vi.fn(() => h.close(false)),
     read: vi.fn(async () => new Uint8Array(1)),
     withoutReadahead: vi.fn(() => source),
   };
@@ -60,7 +61,7 @@ beforeEach(() => {
   h.account = "louis";
   h.held = null;
   h.prepared = new Set();
-  h.state = null;
+  h.state = Promise.resolve(null);
   h.zone.mockReset().mockReturnValue(null);
   h.open.mockImplementation(async () => fakeSource());
   Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
@@ -71,12 +72,14 @@ afterEach(() => {
 });
 
 describe("l'en-tête préparé depuis la fiche", () => {
-  it("après une seconde : lit l'en-tête sous le nom que l'ouverture cherchera, puis ferme la source sans la laisser au relais", async () => {
+  it("après une seconde : lit l'en-tête sous le nom que l'ouverture cherchera, puis ferme la source en gardant ses morceaux sous ce nom, sans les laisser au relais", async () => {
     scheduleSheetHeaderWarmup("film");
     await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
     await flush();
     expect(h.open).toHaveBeenCalledWith("/api/jellyfin/stream/film/stream.mkv?static=true", 5000, null);
     expect(h.openMediaFile).toHaveBeenCalledWith(expect.anything(), "/api/jellyfin/stream/film/stream.mkv?static=true#etag-1");
+    const source = (await h.open.mock.results.at(-1)!.value) as ReturnType<typeof fakeSource>;
+    expect(source.closePrepared).toHaveBeenCalledWith("/api/jellyfin/stream/film/stream.mkv?static=true#etag-1");
     expect(h.close).toHaveBeenCalledWith(false);
   });
 
@@ -113,8 +116,12 @@ describe("l'en-tête préparé depuis la fiche", () => {
     scheduleSheetHeaderWarmup("second");
     await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
     await flush();
-    // La première source est fermée dès que la seconde part, puis la seconde à la fin de sa lecture.
-    expect(h.close).toHaveBeenCalledTimes(2);
+    // La première source est fermée dès que la seconde part, puis la seconde à la fin de sa lecture,
+    // en gardant ses morceaux (`closePrepared` ; la vraie fermeture qui suit ne fait alors plus rien).
+    const [first, second] = (await Promise.all(h.open.mock.results.map((r) => r.value))) as ReturnType<typeof fakeSource>[];
+    expect(first.close).toHaveBeenCalledWith(false);
+    expect(first.closePrepared).not.toHaveBeenCalled();
+    expect(second.closePrepared).toHaveBeenCalledWith("/api/jellyfin/stream/second/stream.mkv?static=true#etag-1");
     expect(h.openMediaFile).toHaveBeenLastCalledWith(expect.anything(), "/api/jellyfin/stream/second/stream.mkv?static=true#etag-1");
   });
 
@@ -157,12 +164,15 @@ describe("l'en-tête préparé depuis la fiche", () => {
   });
 });
 
-describe("« Ouverture rapide » allumée (DECISIONS §200)", () => {
+describe("ouverture rapide : morceaux gardés et zone de reprise (DECISIONS §200)", () => {
   const KEY = "/api/jellyfin/stream/film/stream.mkv?static=true#etag-1";
   const lastSource = () => h.open.mock.results.at(-1)!.value as Promise<ReturnType<typeof fakeSource>>;
 
-  it("coupée : rien n'est gardé, la source meurt comme avant", async () => {
-    scheduleSheetHeaderWarmup("film", false);
+  it("sans version de fichier : rien n'est gardé, la source meurt avec ses octets", async () => {
+    h.info.mockResolvedValueOnce({ streamUrl: "/api/jellyfin/stream/film/stream.mkv?static=true", sizeBytes: 5000, fileVersion: undefined });
+    h.state = Promise.resolve({ resumeSeconds: 600 });
+    h.zone.mockReturnValue({ from: 40 << 20, to: (41 << 20) - 1 });
+    scheduleSheetHeaderWarmup("film");
     await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
     await flush();
     const source = await lastSource();
@@ -173,7 +183,7 @@ describe("« Ouverture rapide » allumée (DECISIONS §200)", () => {
 
   it("titre jamais commencé : les morceaux de l'en-tête sont gardés sous la version du fichier, sans zone de reprise", async () => {
     h.state = Promise.resolve({ resumeSeconds: 0 });
-    scheduleSheetHeaderWarmup("film", true);
+    scheduleSheetHeaderWarmup("film");
     await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
     await flush();
     const source = await lastSource();
@@ -184,7 +194,7 @@ describe("« Ouverture rapide » allumée (DECISIONS §200)", () => {
   it("titre en cours : la zone de reprise est lue, un morceau avant, sept au plus", async () => {
     h.state = Promise.resolve({ resumeSeconds: 600 });
     h.zone.mockReturnValue({ from: 40 << 20, to: (60 << 20) - 1 });
-    scheduleSheetHeaderWarmup("film", true);
+    scheduleSheetHeaderWarmup("film");
     await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
     await flush();
     const source = await lastSource();
@@ -195,7 +205,7 @@ describe("« Ouverture rapide » allumée (DECISIONS §200)", () => {
   it("une position inconnue (Jellyfin muet) ne lit pas de zone", async () => {
     h.state = Promise.resolve({ resumeSeconds: 600, positionUnknown: true });
     h.zone.mockReturnValue({ from: 40 << 20, to: (41 << 20) - 1 });
-    scheduleSheetHeaderWarmup("film", true);
+    scheduleSheetHeaderWarmup("film");
     await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
     await flush();
     expect((await lastSource()).read).not.toHaveBeenCalled();
@@ -203,7 +213,7 @@ describe("« Ouverture rapide » allumée (DECISIONS §200)", () => {
 
   it("déjà préparé sous cette version : rouvrir la fiche ne relit rien", async () => {
     h.prepared.add(KEY);
-    scheduleSheetHeaderWarmup("film", true);
+    scheduleSheetHeaderWarmup("film");
     await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
     await flush();
     expect(h.open).not.toHaveBeenCalled();

@@ -52,8 +52,7 @@ describe("une place par réglage", () => {
   });
 
   it("Lecture : le lecteur et son essai d'ouverture (Lab bêta) ; le reste a sa page", () => {
-    expect(CONFIG_LAYOUT.playback.flatMap(keysOf)).toEqual(["PLAYER_ENABLED", "PLAYER_SERVER_FALLBACK", "OPENING_LAB_ENABLED"]);
-    expect(CONFIG_LAYOUT.playback.find((c) => (c.keys as readonly string[] | undefined)?.includes("OPENING_LAB_ENABLED"))).toMatchObject({ lab: true });
+    expect(CONFIG_LAYOUT.playback.flatMap(keysOf)).toEqual(["PLAYER_ENABLED", "PLAYER_SERVER_FALLBACK"]);
     expect(CONFIG_LAYOUT.diffusion.flatMap(keysOf).sort()).toEqual(
       ["CAST_RECEIVER_APP_ID", "CHROMECAST_FOR_EVERYONE", "OFFLINE_DOWNLOADS", "OFFLINE_DOWNLOADS_FOR_EVERYONE", "OFFLINE_SERVER_QUOTA_GB"].sort(),
     );

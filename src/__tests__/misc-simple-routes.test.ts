@@ -76,7 +76,6 @@ describe("GET /api/config/public", () => {
       xrayAvailable: false,
       // « Revenir au début de la scène » (§143) : livré coupé.
       sceneRestartAvailable: false,
-      openingLab: false,
       bookRequests: false,
       // Pas de nouvelle adresse dans cette configuration : rien à proposer à la connexion (§119).
       passageHost: null,

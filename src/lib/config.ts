@@ -142,11 +142,6 @@ export const config = {
     get autoFrame() {
       return optional("PLAYER_AUTO_FRAME", "true") === "true";
     },
-    // « Ouverture rapide » (Lab bêta, DECISIONS §200) : à qui le lecteur applique les gestes d'ouverture
-    // repris de la R&D de Lumen — `off` (défaut), `admins`, `tous`. Coupé, l'ouverture est celle d'avant.
-    get openingLab() {
-      return parseAudience(optional("OPENING_LAB_ENABLED", "off"));
-    },
     // L'application que le Chromecast ouvre (DECISIONS.md §64) : le récepteur de Google par défaut,
     // ou celui qu'une installation a enregistré elle-même. Une valeur mal formée retombe sur le
     // défaut — voir `receiverAppIdOf`.

@@ -20,14 +20,6 @@ function sceneRestartAudience(): Audience {
   }
 }
 
-/** « Ouverture rapide » (§200) : même prudence — illisible vaut « coupé ». */
-function openingLabAudience(): Audience {
-  try {
-    return (config.player as { openingLab?: Audience }).openingLab ?? "off";
-  } catch {
-    return "off";
-  }
-}
 
 /**
  * Ce que l'interface a besoin de savoir avant d'afficher quoi que ce soit.
@@ -79,9 +71,6 @@ export async function GET(req: NextRequest) {
     // « Revenir au début de la scène » (DECISIONS.md §143) : le bouton montré à ce compte. Coupé (défaut), la
     // décision tourne quand même sur les scènes d'« À l'écran » et n'est que mesurée (`sceneRestart` du bilan).
     sceneRestartAvailable: !!session && xrayOpenTo(session) && xrayConfigured() && audienceAllows(sceneRestartAudience(), session),
-    // « Ouverture rapide » (DECISIONS §200, Lab bêta) : le lecteur et la fiche appliquent à ce compte les
-    // gestes d'ouverture repris de la R&D de Lumen. Coupé par défaut ; jamais pour un lien de partage.
-    openingLab: !!session && session.role !== "share" && audienceAllows(openingLabAudience(), session),
     // « Demander un livre » : seulement avec les livres eux-mêmes.
     bookRequests: config.books?.requests === true && booksShown,
     // La disposition de l'accueil, réglée par l'exploitant (DECISIONS.md §52).

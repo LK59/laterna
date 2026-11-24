@@ -3537,7 +3537,6 @@
       "GOOGLE_BOOKS_API_KEY": "Google-Books-API-Schlüssel",
       "OFFLINE_SERVER_QUOTA_GB": "Maximaler Serverplatz für Downloads (GB)",
       "PLAYER_AUTO_FRAME": "Bild über schwarze Balken vergrößern",
-      "OPENING_LAB_ENABLED": "„Schnelles Öffnen“: Die Titelseite behält, was sie vorbereitet hat, und liest die Fortsetzungsstelle; eine Fortsetzung fordert ihre Position an, sobald der Index gelesen ist",
       "CAST_RECEIVER_APP_ID": "Chromecast-Empfänger (Anwendungs-ID, leer = der von Google)",
       "CHROMECAST_FOR_EVERYONE": "Chromecast für alle Konten (sonst nur Administratoren)",
       "HOME_CONTINUE_HERO": "Laufende Titel im Startseiten-Banner zeigen",
@@ -3783,10 +3782,6 @@
         "booksOn": "Bücher einschalten",
         "playerOn": "Player einschalten"
       }
-    },
-    "openingLab": {
-      "title": "Schnelles Öffnen",
-      "why": "Test: Die Seite eines Titels behält Kopfdaten und Anfang, die sie vorbereitet hat, drei Minuten lang und liest auch die Fortsetzungsstelle (höchstens 7 MB); eine Fortsetzung fordert ihre Bilder an, sobald der Index gelesen ist. Bis zu 7 MB mehr von einer Titelseite gelesen. Lassen Sie es aus oder nur für Administratoren, solange Sie es testen."
     },
     "sceneRestart": {
       "title": "Zum Anfang der Szene",

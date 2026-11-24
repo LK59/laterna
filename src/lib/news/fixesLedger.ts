@@ -1581,6 +1581,18 @@ export const FIXES_LEDGER: FixLedgerEntry[] = [
         de: "Enthält eine Datei mehrere Folgen, zeigt die Liste „1–4“ und einen Titel pro Zeile statt „1, 5, 9 …“ und aneinanderklebender Titel.",
       },
     ],
+  },  {
+    version: "10.68.0",
+    page: "10.60",
+    group: { fr: "Lecture", en: "Playback", es: "Reproducción", de: "Wiedergabe" },
+    items: [
+      {
+        fr: "Reprendre un film en cours démarre nettement plus vite, surtout sur les gros fichiers : l'image arrive souvent deux fois plus tôt.",
+        en: "Resuming a film you started now begins much faster, especially with large files: the picture often arrives twice as soon.",
+        es: "Retomar una película empezada arranca mucho más rápido, sobre todo con archivos grandes: la imagen suele llegar el doble de pronto.",
+        de: "Das Fortsetzen eines begonnenen Films startet deutlich schneller, vor allem bei großen Dateien: Das Bild erscheint oft doppelt so früh.",
+      },
+    ],
   },
 ];
 

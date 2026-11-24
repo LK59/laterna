@@ -9,9 +9,7 @@
  *
  * Le même geste que la préparation de l'épisode suivant (`nextEpisodeWarmup.ts`), en plus sobre :
  * l'en-tête lu est gardé là où l'ouverture le cherche déjà (le cache d'en-têtes de `parseMatroska`,
- * quatre fichiers, nommé par `mediaHeaderKey`), et rien n'est écrit sur l'appareil. Les octets lus
- * meurent avec la source (`close(false)`) : ne reste en mémoire que l'en-tête analysé — pistes et
- * points d'index, quelques centaines de Ko au plus.
+ * quatre fichiers, nommé par `mediaHeaderKey`), et rien n'est écrit sur l'appareil.
  *
  * Retenu exprès :
  * - **une seconde de fiche d'abord** : une fiche traversée ne coûte rien ;
@@ -22,8 +20,8 @@
  * - **rouvrir la fiche ne relit rien** : un en-tête encore dans le cache est rendu sans un octet lu.
  * Un échec ne coûte rien : l'ouverture lit l'en-tête elle-même, comme avant.
  *
- * **« Ouverture rapide » allumée** (Lab bêta, `OPENING_LAB_ENABLED`, DECISIONS §200), deux gestes de plus,
- * repris de la R&D de Lumen pour Jellyfin (24/11/2026) :
+ * **Ouverture rapide** (DECISIONS §200, repris de la R&D de Lumen pour Jellyfin ; essayé derrière un
+ * interrupteur le 24/11/2026 — reprises sur iPhone de 7 s à 3,5 s environ — puis gardé pour tous) :
  * - les morceaux lus sont **gardés trois minutes** sous la version du fichier (`closePrepared`) au lieu
  *   de mourir avec la source : le premier morceau porte aussi les premières images, et l'ouverture le
  *   redemandait une seconde après l'avoir eu en main ;
@@ -45,11 +43,11 @@ import { trace } from "@/lib/webcodecs/trace";
 
 /** Le temps de fiche avant de lire quoi que ce soit. */
 export const SHEET_WARMUP_DELAY_MS = 1000;
-/** « Ouverture rapide » : au plus tant de morceaux (de 1 Mio) lus pour la zone de reprise. */
+/** Ouverture rapide : au plus tant de morceaux (de 1 Mio) lus pour la zone de reprise. */
 const RESUME_ZONE_CHUNKS = 7;
 /** En deçà, une reprise est un départ du début : le premier morceau la porte déjà. */
 const RESUME_FROM_SECONDS = 5;
-/** « Ouverture rapide » : l'état du compte (sa position) attendu au plus tant, puis on prépare sans. */
+/** Ouverture rapide : l'état du compte (sa position) attendu au plus tant, puis on prépare sans. */
 const STATE_WAIT_MS = 1500;
 /** La préparation en cours — une seule : la suivante l'arrête. */
 let current: AbortController | null = null;
@@ -65,11 +63,11 @@ function savesData(): boolean {
  *
  * @returns de quoi tout arrêter — à appeler quand la fiche se ferme ou change de titre.
  */
-export function scheduleSheetHeaderWarmup(itemId: string, openingLab = false): () => void {
+export function scheduleSheetHeaderWarmup(itemId: string): () => void {
   const controller = new AbortController();
   const timer = setTimeout(() => {
     if (controller.signal.aborted || document.hidden || savesData()) return;
-    void warmSheetHeader(itemId, controller, openingLab);
+    void warmSheetHeader(itemId, controller);
   }, SHEET_WARMUP_DELAY_MS);
   return () => {
     clearTimeout(timer);
@@ -78,7 +76,7 @@ export function scheduleSheetHeaderWarmup(itemId: string, openingLab = false): (
 }
 
 /** Exportée pour les tests ; ailleurs, passer par `scheduleSheetHeaderWarmup`. */
-export async function warmSheetHeader(itemId: string, controller: AbortController, openingLab = false): Promise<void> {
+export async function warmSheetHeader(itemId: string, controller: AbortController): Promise<void> {
   current?.abort();
   current = controller;
   const { signal } = controller;
@@ -90,8 +88,8 @@ export async function warmSheetHeader(itemId: string, controller: AbortControlle
     // relais, et ouvrir une source les lui prendrait (`HttpByteSource.open` → `takeHandover`) pour les
     // jeter aussitôt. Son en-tête est de toute façon dans le cache.
     if (holdsHandover(info.streamUrl)) return;
-    // « Ouverture rapide » : sous sa version, le fichier est déjà préparé — rouvrir la fiche ne relit rien.
-    const preparedKey = openingLab && info.fileVersion ? mediaHeaderKey(info.streamUrl, info.fileVersion) : null;
+    // Sous sa version, le fichier est déjà préparé — rouvrir la fiche ne relit rien.
+    const preparedKey = info.fileVersion ? mediaHeaderKey(info.streamUrl, info.fileVersion) : null;
     if (preparedKey && holdsPrepared(preparedKey)) return;
     const startedAt = Date.now();
     // Un titre gardé sur l'appareil (« Reprendre », « À suivre ») se lit depuis l'appareil : rien ne
@@ -135,7 +133,7 @@ export async function warmSheetHeader(itemId: string, controller: AbortControlle
         }
       }
       trace(`fiche : en-tête et index préparés en ${Date.now() - startedAt} ms` + (preparedKey ? ` — gardés pour l'ouverture${zoneChunks ? `, zone de reprise (${zoneChunks} Mo)` : ""}` : ""));
-      // Gardés sous la version du fichier pour l'ouverture qui suivra (« Ouverture rapide ») ; `stop`
+      // Gardés sous la version du fichier pour l'ouverture qui suivra ; `stop`
       // ensuite ne fait plus rien, la source étant fermée.
       if (preparedKey) source.closePrepared(preparedKey);
     } finally {

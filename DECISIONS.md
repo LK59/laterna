@@ -12521,36 +12521,40 @@ déjà l'image du titre.
 
 Tests : `login-background.test.ts` (traitement, bornes, route publique, route d'administration), `login-backdrop.test.tsx`.
 
-## 200. « Ouverture rapide » : les gestes d'ouverture de la R&D de Lumen, à l'essai derrière un interrupteur (24/11/2026)
+## 200. Ouverture rapide : les gestes d'ouverture de la R&D de Lumen, essayés derrière un interrupteur puis gardés pour tous (24/11/2026)
 
-**La règle.** `OPENING_LAB_ENABLED` (Configuration → Lecture, carte marquée « Lab bêta », audience `off` / `admins` /
-`tous`, `off` par défaut) applique à un compte deux gestes trouvés par la R&D de Lumen pour Jellyfin (branche
-`rd/lumen-next`, `docs/rd-ouverture.md` de ce dépôt-là, banc du 24/11/2026). Coupé, l'ouverture est exactement
-celle d'avant : aucun chemin ne change, et les empreintes du lecteur, dont les doubles n'ont pas la clé, ne bougent pas.
+**La règle.** Deux gestes trouvés par la R&D de Lumen pour Jellyfin (branche `rd/lumen-next`, `docs/rd-ouverture.md`
+de ce dépôt-là, banc du 24/11/2026) font partie de l'ouverture, pour tous les comptes. Ils ont d'abord été livrés en
+10.67.0 derrière `OPENING_LAB_ENABLED` (« Lab bêta », coupé par défaut), puis l'interrupteur a été retiré le même jour
+après l'essai ci-dessous. Une valeur restée en base sous cette clé n'est plus lue.
 
 1. **Les morceaux préparés par la fiche sont gardés** (`sheetHeaderWarmup.ts`) : trois minutes, deux fichiers au plus,
    sous `mediaHeaderKey(url, version)` (`HttpByteSource.closePrepared`, `leavePrepared`/`takePrepared`), et repris par
    l'ouverture (`HttpByteSource.open(…, preparedKey)`). Avant, ils mouraient avec la source et l'ouverture redemandait
-   le premier morceau, qui porte aussi les premières images. Pour un titre en cours, la fiche lit aussi la **zone de
-   reprise** : du groupe d'images où tombe `openingPosition` à l'image clé suivante, un morceau avant pour le son,
-   sept morceaux (7 Mio) au plus — depuis l'appareil quand le cache de reprise la tient déjà, sans réseau alors. La
-   position vient de la réponse que la fiche a déjà demandée (`peekPrefetchedPlaybackState`), jamais d'une requête de plus.
-2. **En reprise, la zone de départ est demandée dès l'index lu** (`probeOpened`, `openingLab`) : `warm(keptRangeAt(…).from)`
-   avec l'avance réduite d'un saut (`focusOpening`) jusqu'au premier envoi (`MseSource` → `Remuxer.openingSettled` →
+   l'en-tête, l'index et le premier morceau, qui porte aussi les premières images. Pour un titre en cours, la fiche lit
+   aussi la **zone de reprise** : du groupe d'images où tombe `openingPosition` à l'image clé suivante, un morceau avant
+   pour le son, sept morceaux (7 Mio) au plus — depuis l'appareil quand le cache de reprise la tient déjà, sans réseau
+   alors. La position vient de la réponse que la fiche a déjà demandée (`peekPrefetchedPlaybackState`), jamais d'une
+   requête de plus. Sans version de fichier connue, rien n'est gardé : un fichier remplacé ne doit rien retrouver.
+2. **En reprise, la zone de départ est demandée dès l'index lu** (`probeOpened`) : `warm(keptRangeAt(…).from)` avec
+   l'avance réduite d'un saut (`focusOpening`) jusqu'au premier envoi (`MseSource` → `Remuxer.openingSettled` →
    `seekSettled`). Sinon elle ne l'était qu'à la première lecture du remultiplexeur, après le choix de la piste et
-   l'amorçage du son.
+   l'amorçage du son. Une position fausse ne coûte que des morceaux lus pour rien.
 
 **Pas repris :** `onViable` et `pickAudioTrack` — l'hôte de Laterna connaît la piste d'avance (`audioTrackNumber`) et
 ne sonde pas deux fois.
 
-**Mesure.** La ligne `start` porte `openingLab: true` quand l'interrupteur est allumé : comparer `openedInMs`,
-`openedFrom` et `deviceBytes` des ouvertures avec et sans, par appareil, avant de décider de le garder. Le cache de
-reprise (OPFS) tenait déjà la zone des titres de « Reprendre » : le gain attendu porte surtout sur les titres hors de
-ce cache et les comptes sans cache.
+**Mesure qui a décidé (24/11/2026, player.log, `openingLab: true` sur les lignes `start` de 10.67.0).** Cache vidé et
+application relancée avant chaque ouverture, deux remux 4K de 12 et 17 Go (index de plus de 10 000 points, son DTS
+ré-encodé), première image d'une reprise au milieu du film : iPhone 8,9 / 7,5 s → 4,3 s et 7,0 / 4,6 s → 2,7 s ; Chrome
+5,1 s → 2,3 s. Au départ du début, le lecteur était prêt 0,9 à 1,8 s plus tôt (l'en-tête et l'index n'étaient plus
+relus, 1,1 à 2,3 s sur ces fichiers). Aucun repli, aucune erreur, aucun blocage, sauts et pistes inchangés ; la
+référence d'alors (médianes depuis le 01/11, reprises iOS depuis le réseau) était de 3,1 s, 5,2 s au 75e centile. Un
+départ du début ne coûte rien de plus : la fiche lisait déjà ces octets. Seule la zone de reprise (7 Mio au plus) est
+une lecture en plus, et seulement pour un titre en cours dont la fiche reste une seconde à l'écran.
 
-**Où.** `src/lib/openingLab.ts` (`useOpeningLab`, configuration publique suivie), `usePlaybackPrefetch.ts`,
-`ExperimentalPlayerHost.tsx` (lu par une ref : un réglage qui change pendant un film ne reconstruit rien),
-`webcodecs/byteSource.ts`, `mseSource.ts`, `remuxer.ts`, `remuxPlayback.ts`. Le moteur de Lumen porte le même code.
+**Où.** `usePlaybackPrefetch.ts`, `sheetHeaderWarmup.ts`, `webcodecs/byteSource.ts`, `mseSource.ts`, `remuxer.ts`,
+`remuxPlayback.ts`. Le moteur de Lumen porte le même code.
 
-Tests : `sheetHeaderWarmup.test.ts` (« Ouverture rapide » allumée), `webcodecs-byteSource.test.ts`,
-`webcodecs-mseSource.test.ts`, `config-layout.test.ts`, `misc-simple-routes.test.ts`.
+Tests : `sheetHeaderWarmup.test.ts` (« ouverture rapide »), `webcodecs-byteSource.test.ts`,
+`webcodecs-mseSource.test.ts`.

@@ -106,17 +106,6 @@ export interface RemuxPlaybackOptions {
    */
   audioTrackNumber?: number | null;
   /**
-   * « Ouverture rapide » (Lab bêta, `OPENING_LAB_ENABLED`, DECISIONS §200) : deux gestes repris de la R&D
-   * de Lumen pour Jellyfin (24/11/2026), à essayer avant de les garder.
-   * - Les morceaux qu'une fiche a préparés (`scheduleSheetHeaderWarmup`) sont repris sous la version du
-   *   fichier (`HttpByteSource.open`, `preparedKey`) : l'ouverture ne relit ni l'en-tête, ni l'index,
-   *   ni la zone de départ.
-   * - En reprise, les octets de la position sont demandés dès l'index lu, avance réduite d'un saut
-   *   jusqu'au premier envoi (`focusOpening`, `Remuxer.openingSettled`).
-   * Absent ou faux, l'ouverture est exactement celle d'avant.
-   */
-  openingLab?: boolean;
-  /**
    * Ouvrir sans lancer la lecture : un pipeline reconstruit pour un changement de piste pendant
    * une pause. Sans cela, la garde de démarrage prenait l'élément resté à l'arrêt pour un
    * démarrage raté et le relançait d'elle-même — relevé sur iPhone le 21/09/2026.
@@ -259,9 +248,9 @@ export async function probePlaybackPath(options: RemuxPlaybackOptions): Promise<
   const disk = options.disk
     ? await Promise.race([options.disk.catch(() => null), new Promise<null>((resolve) => setTimeout(() => resolve(null), DISK_WAIT_MS))])
     : null;
-  // Sous le nom de la version du fichier, ce qu'une fiche a pu préparer — seulement « Ouverture rapide »
-  // allumée (`openingLab`).
-  const preparedKey = options.openingLab && options.fileVersion ? mediaHeaderKey(options.streamUrl, options.fileVersion) : null;
+  // Sous le nom de la version du fichier, ce qu'une fiche a pu préparer (`scheduleSheetHeaderWarmup`) :
+  // l'ouverture ne relit alors ni l'en-tête, ni l'index, ni la zone de départ (DECISIONS §200).
+  const preparedKey = options.fileVersion ? mediaHeaderKey(options.streamUrl, options.fileVersion) : null;
   const source = await HttpByteSource.open(options.streamUrl, options.knownSize, disk, preparedKey);
   trace(`flux ouvert — ${source.size} octets`);
   try {
@@ -301,17 +290,17 @@ async function probeOpened(source: ByteSource, options: RemuxPlaybackOptions, li
   } finally {
     if (resuming) source.holdReadahead?.(false);
   }
-  // « Ouverture rapide » (`openingLab`) : en reprise, les octets de la position de départ sont demandés
+  // Ouverture rapide (DECISIONS §200) : en reprise, les octets de la position de départ sont demandés
   // dès que l'index dit où ils sont. Sinon ils ne l'étaient qu'à la première lecture du remultiplexeur,
   // après le choix de la piste et l'amorçage du son — 0,7 s de lien inoccupé à 40 ms de latence (banc
   // de Lumen, 24/11/2026). Sans conséquence si la position est fausse : des morceaux gardés en mémoire
   // qu'une lecture aurait demandés. L'avance est réduite d'un saut jusqu'au premier envoi.
-  if (options.openingLab && resuming && source instanceof HttpByteSource) {
+  if (resuming && source instanceof HttpByteSource) {
     const from = keptRangeAt(file, options.startSeconds, file.tracks.find((t) => t.type === "video")?.number)?.from;
     if (from !== undefined) {
       source.focusOpening();
       source.warm(from);
-      trace(`ouverture rapide : zone de départ demandée dès l'index (octet ${from})`);
+      trace(`zone de départ demandée dès l'index (octet ${from})`);
     }
   }
   const headerMs = Date.now() - headerAt;
