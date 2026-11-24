@@ -3537,6 +3537,7 @@
       "GOOGLE_BOOKS_API_KEY": "Clé API Google Books",
       "OFFLINE_SERVER_QUOTA_GB": "Place maximale des téléchargements sur le serveur (Go)",
       "PLAYER_AUTO_FRAME": "Agrandir l'image au-dessus des bandes noires",
+      "OPENING_LAB_ENABLED": "« Ouverture rapide » : la fiche garde ce qu'elle a préparé et lit la zone de reprise ; une reprise demande sa position dès l'index lu",
       "CAST_RECEIVER_APP_ID": "Récepteur Chromecast (identifiant d'application, vide = celui de Google)",
       "CHROMECAST_FOR_EVERYONE": "Diffusion Chromecast pour tous les comptes (sinon administrateurs seulement)",
       "HOME_CONTINUE_HERO": "Afficher les reprises dans la bannière d'accueil",
@@ -3782,6 +3783,10 @@
         "booksOn": "Allumer les livres",
         "playerOn": "Allumer le lecteur"
       }
+    },
+    "openingLab": {
+      "title": "Ouverture rapide",
+      "why": "Essai : la fiche d'un titre garde trois minutes l'en-tête et le début qu'elle a préparés, et lit aussi l'endroit où reprendre (7 Mo au plus) ; une reprise demande ses images dès que l'index est lu. Jusqu'à 7 Mo de plus lus depuis une fiche. Laissez-le coupé, ou réservé aux administrateurs, le temps de l'essayer."
     },
     "sceneRestart": {
       "title": "Revenir au début de la scène",

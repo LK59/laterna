@@ -87,6 +87,17 @@ export function prefetchPlaybackState(itemId: string): void {
 }
 
 /**
+ * Ce que la fiche a demandé pour ce titre, **regardé sans le prendre** — pour une préparation qui veut
+ * savoir où le compte s'était arrêté (« Ouverture rapide », `sheetHeaderWarmup.ts`). L'ouverture prend
+ * toujours sa réponse par `takePrefetchedPlaybackState`, une seule fois.
+ */
+export function peekPrefetchedPlaybackState(itemId: string): Promise<PlaybackState | null> | null {
+  const entry = prefetched.get(itemId);
+  if (!entry || Date.now() - entry.at >= PLAYBACK_STATE_FRESH_MS) return null;
+  return entry.state;
+}
+
+/**
  * Ce que la fiche a demandé pour ce titre, si c'est assez récent — et une seule fois.
  *
  * Pris, pas lu : la réponse sert l'ouverture qu'elle précède et aucune autre. Une seconde

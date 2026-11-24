@@ -3537,6 +3537,7 @@
       "GOOGLE_BOOKS_API_KEY": "Google Books API key",
       "OFFLINE_SERVER_QUOTA_GB": "Maximum server space for downloads (GB)",
       "PLAYER_AUTO_FRAME": "Enlarge the picture over black bars",
+      "OPENING_LAB_ENABLED": "“Fast opening”: the title sheet keeps what it prepared and reads the resume area; a resume requests its position as soon as the index is read",
       "CAST_RECEIVER_APP_ID": "Chromecast receiver (application ID, empty = Google's)",
       "CHROMECAST_FOR_EVERYONE": "Chromecast for every account (otherwise administrators only)",
       "HOME_CONTINUE_HERO": "Show what people are watching in the home banner",
@@ -3782,6 +3783,10 @@
         "booksOn": "Turn on books",
         "playerOn": "Turn on the player"
       }
+    },
+    "openingLab": {
+      "title": "Fast opening",
+      "why": "Trial: a title's sheet keeps the header and beginning it prepared for three minutes, and also reads where playback would resume (7 MB at most); a resume requests its pictures as soon as the index is read. Up to 7 MB more read from a sheet. Leave it off, or limited to administrators, while trying it."
     },
     "sceneRestart": {
       "title": "Back to the start of the scene",

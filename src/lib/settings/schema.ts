@@ -146,6 +146,8 @@ export const SETTINGS: readonly SettingDef[] = [
   { key: "BOOKS_GOOGLE_ENRICH", group: "playback", kind: "boolean", need: "optional", fallback: "false", inApp: true },
   { key: "GOOGLE_BOOKS_API_KEY", group: "playback", kind: "secret", need: "optional", fallback: "", inApp: true },
   { key: "PLAYER_AUTO_FRAME", group: "playback", kind: "boolean", need: "optional", fallback: "true", inApp: true },
+  // « Ouverture rapide » (Lab bêta, DECISIONS §200) : gestes d'ouverture repris de la R&D de Lumen, à essayer.
+  { key: "OPENING_LAB_ENABLED", group: "playback", kind: "audience", need: "optional", fallback: "off", inApp: true },
   // L'application que le Chromecast ouvre (DECISIONS.md §64) : vide, le récepteur public de Google.
   // Pas un secret — l'identifiant d'un récepteur qu'une installation a enregistré elle-même.
   { key: "CAST_RECEIVER_APP_ID", group: "playback", kind: "text", need: "optional", fallback: "", inApp: true, placeholder: "CC1AD845" },

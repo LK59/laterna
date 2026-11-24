@@ -37,6 +37,7 @@ import { useSceneMode } from "@/lib/sceneMode";
 import { PLAYBACK_CLIENTS } from "@/lib/playbackClients";
 import { useViewportResizing } from "@/lib/useViewportResizing";
 import { useT, useLocale } from "@/components/TranslationProvider";
+import { useOpeningLab } from "@/lib/openingLab";
 import { probePlaybackPath, type RemuxPlayback } from "@/lib/webcodecs/remuxPlayback";
 import { AudioKeepAwake } from "@/components/player/audioKeepAwake";
 import { trackedPosition } from "@/components/player/session/trackedPosition";
@@ -1048,6 +1049,13 @@ export function ExperimentalPlayerHost({
   // What the sheet asked for in advance is still taken, through `directInfoForOpening`, as long
   // as it is under five minutes old (`directInfo.ts`).
   const openingId = useId();
+  // « Ouverture rapide » (DECISIONS §200, Lab bêta) : lue par l'effet d'ouverture au moment d'ouvrir, par
+  // une ref — un réglage qui arrive pendant la lecture ne doit pas reconstruire le pipeline.
+  const openingLab = useOpeningLab();
+  const openingLabRef = useRef(openingLab);
+  useEffect(() => {
+    openingLabRef.current = openingLab;
+  }, [openingLab]);
   // Le numéro de l'essai : une description perdue faute de réseau est redemandée sous une clé
   // neuve, la seule façon de faire reposer la question à SWR sans revalidation (voir plus bas).
   const [infoAttempt, setInfoAttempt] = useState(0);
@@ -1932,6 +1940,8 @@ export function ExperimentalPlayerHost({
         openedInMs: Date.now() - attemptStartedAt,
         at: startSeconds,
         rebuild: rebuildCount,
+        // « Ouverture rapide » (§200) : dit seulement quand elle est allumée — de quoi comparer `openedInMs`.
+        ...(openingLabRef.current ? { openingLab: true } : {}),
         // À la première ouverture : d'où vient la position, et ce que disait le serveur quand c'est l'appelant
         // qui l'a fournie — une fiche relue avant que Jellyfin ait pris l'arrêt donne une reprise périmée.
         ...(rebuildCount === 0
@@ -2420,6 +2430,8 @@ export function ExperimentalPlayerHost({
       // Ce que le spectateur a choisi, si ce pipeline en remplace un : on ouvre dessus, au lieu
       // d'ouvrir ailleurs puis d'y basculer. Voir `openingAudio`.
       audioTrackNumber: wantedAudioRef.current,
+      // « Ouverture rapide » (§200) : absent quand elle est coupée — l'ouverture est alors celle d'avant.
+      ...(openingLabRef.current ? { openingLab: true } : {}),
       // « Améliorer les dialogues », lu à cette ouverture — absent tant qu'il est désactivé.
       ...(openedDialogue !== "off" ? { dialogue: openedDialogue } : {}),
       // Reconstruit pour un changement de piste pendant une pause : rien ne doit le relancer, ni

@@ -12520,3 +12520,37 @@ contexte à `LoginBackdrop` : dessinée au premier rendu, sans requête de plus 
 déjà l'image du titre.
 
 Tests : `login-background.test.ts` (traitement, bornes, route publique, route d'administration), `login-backdrop.test.tsx`.
+
+## 200. « Ouverture rapide » : les gestes d'ouverture de la R&D de Lumen, à l'essai derrière un interrupteur (24/11/2026)
+
+**La règle.** `OPENING_LAB_ENABLED` (Configuration → Lecture, carte marquée « Lab bêta », audience `off` / `admins` /
+`tous`, `off` par défaut) applique à un compte deux gestes trouvés par la R&D de Lumen pour Jellyfin (branche
+`rd/lumen-next`, `docs/rd-ouverture.md` de ce dépôt-là, banc du 24/11/2026). Coupé, l'ouverture est exactement
+celle d'avant : aucun chemin ne change, et les empreintes du lecteur, dont les doubles n'ont pas la clé, ne bougent pas.
+
+1. **Les morceaux préparés par la fiche sont gardés** (`sheetHeaderWarmup.ts`) : trois minutes, deux fichiers au plus,
+   sous `mediaHeaderKey(url, version)` (`HttpByteSource.closePrepared`, `leavePrepared`/`takePrepared`), et repris par
+   l'ouverture (`HttpByteSource.open(…, preparedKey)`). Avant, ils mouraient avec la source et l'ouverture redemandait
+   le premier morceau, qui porte aussi les premières images. Pour un titre en cours, la fiche lit aussi la **zone de
+   reprise** : du groupe d'images où tombe `openingPosition` à l'image clé suivante, un morceau avant pour le son,
+   sept morceaux (7 Mio) au plus — depuis l'appareil quand le cache de reprise la tient déjà, sans réseau alors. La
+   position vient de la réponse que la fiche a déjà demandée (`peekPrefetchedPlaybackState`), jamais d'une requête de plus.
+2. **En reprise, la zone de départ est demandée dès l'index lu** (`probeOpened`, `openingLab`) : `warm(keptRangeAt(…).from)`
+   avec l'avance réduite d'un saut (`focusOpening`) jusqu'au premier envoi (`MseSource` → `Remuxer.openingSettled` →
+   `seekSettled`). Sinon elle ne l'était qu'à la première lecture du remultiplexeur, après le choix de la piste et
+   l'amorçage du son.
+
+**Pas repris :** `onViable` et `pickAudioTrack` — l'hôte de Laterna connaît la piste d'avance (`audioTrackNumber`) et
+ne sonde pas deux fois.
+
+**Mesure.** La ligne `start` porte `openingLab: true` quand l'interrupteur est allumé : comparer `openedInMs`,
+`openedFrom` et `deviceBytes` des ouvertures avec et sans, par appareil, avant de décider de le garder. Le cache de
+reprise (OPFS) tenait déjà la zone des titres de « Reprendre » : le gain attendu porte surtout sur les titres hors de
+ce cache et les comptes sans cache.
+
+**Où.** `src/lib/openingLab.ts` (`useOpeningLab`, configuration publique suivie), `usePlaybackPrefetch.ts`,
+`ExperimentalPlayerHost.tsx` (lu par une ref : un réglage qui change pendant un film ne reconstruit rien),
+`webcodecs/byteSource.ts`, `mseSource.ts`, `remuxer.ts`, `remuxPlayback.ts`. Le moteur de Lumen porte le même code.
+
+Tests : `sheetHeaderWarmup.test.ts` (« Ouverture rapide » allumée), `webcodecs-byteSource.test.ts`,
+`webcodecs-mseSource.test.ts`, `config-layout.test.ts`, `misc-simple-routes.test.ts`.

@@ -6,6 +6,7 @@ import { clearFileMissing, isFileMissing, markFileMissing } from "@/lib/missingF
 import { usePlayerEnabled } from "@/lib/usePlayerEnabled";
 import { prefetchPlaybackState } from "@/lib/playbackPrefetch";
 import { scheduleSheetHeaderWarmup } from "@/lib/sheetHeaderWarmup";
+import { useOpeningLab } from "@/lib/openingLab";
 import { usePlaybackMode } from "@/components/PlaybackProvider";
 
 /**
@@ -35,6 +36,8 @@ export function usePlaybackPrefetch(itemId: string | null | undefined): void {
   const enabled = usePlayerEnabled();
   // Plein écran ou réduit : le réseau est au film.
   const filmOpen = usePlaybackMode() !== "closed";
+  // « Ouverture rapide » (§200, Lab bêta) : la préparation garde ses morceaux et lit la zone de reprise.
+  const openingLab = useOpeningLab();
 
   useEffect(() => {
     if (!enabled || !itemId) return;
@@ -52,6 +55,6 @@ export function usePlaybackPrefetch(itemId: string | null | undefined): void {
 
   useEffect(() => {
     if (!enabled || !itemId || filmOpen) return;
-    return scheduleSheetHeaderWarmup(itemId);
-  }, [enabled, itemId, filmOpen]);
+    return scheduleSheetHeaderWarmup(itemId, openingLab);
+  }, [enabled, itemId, filmOpen, openingLab]);
 }

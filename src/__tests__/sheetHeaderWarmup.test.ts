@@ -15,11 +15,18 @@ const h = vi.hoisted(() => ({
   openDisk: vi.fn(async () => null as unknown),
   account: "louis" as string | null,
   held: null as string | null,
+  prepared: new Set<string>(),
+  state: null as Promise<{ resumeSeconds: number; positionUnknown?: true } | null> | null,
+  zone: vi.fn((): { from: number; to: number } | null => null),
 }));
 vi.mock("@/lib/webcodecs/byteSource", () => ({
   HttpByteSource: { open: (...a: unknown[]) => h.open(...a) },
   holdsHandover: (url: string) => url === h.held,
+  holdsPrepared: (key: string) => h.prepared.has(key),
+  CHUNK_SIZE: 1 << 20,
 }));
+vi.mock("@/lib/playbackPrefetch", () => ({ peekPrefetchedPlaybackState: () => h.state }));
+vi.mock("@/lib/webcodecs/matroska", () => ({ keptRangeAt: (...a: unknown[]) => h.zone(...(a as [])) }));
 vi.mock("@/lib/webcodecs/mediaFile", async (importOriginal) => ({
   mediaHeaderKey: (await importOriginal<typeof import("@/lib/webcodecs/mediaFile")>()).mediaHeaderKey,
   openMediaFile: (...a: unknown[]) => h.openMediaFile(...(a as [])),
@@ -32,7 +39,13 @@ import { forgetSheetHeaderWarmups, scheduleSheetHeaderWarmup, SHEET_WARMUP_DELAY
 
 /** Une source dont chaque fermeture est comptée, et dont la lecture d'en-tête peut rester pendante. */
 function fakeSource() {
-  const source = { close: vi.fn((leaveForNext?: boolean) => h.close(leaveForNext)), withoutReadahead: vi.fn(() => source) };
+  const source = {
+    size: 100 << 20,
+    close: vi.fn((leaveForNext?: boolean) => h.close(leaveForNext)),
+    closePrepared: vi.fn(),
+    read: vi.fn(async () => new Uint8Array(1)),
+    withoutReadahead: vi.fn(() => source),
+  };
   return source;
 }
 
@@ -46,6 +59,9 @@ beforeEach(() => {
   forgetSheetHeaderWarmups();
   h.account = "louis";
   h.held = null;
+  h.prepared = new Set();
+  h.state = null;
+  h.zone.mockReset().mockReturnValue(null);
   h.open.mockImplementation(async () => fakeSource());
   Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
   Object.defineProperty(navigator, "connection", { configurable: true, value: undefined });
@@ -138,5 +154,58 @@ describe("l'en-tête préparé depuis la fiche", () => {
     await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
     await flush();
     expect(h.close).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("« Ouverture rapide » allumée (DECISIONS §200)", () => {
+  const KEY = "/api/jellyfin/stream/film/stream.mkv?static=true#etag-1";
+  const lastSource = () => h.open.mock.results.at(-1)!.value as Promise<ReturnType<typeof fakeSource>>;
+
+  it("coupée : rien n'est gardé, la source meurt comme avant", async () => {
+    scheduleSheetHeaderWarmup("film", false);
+    await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
+    await flush();
+    const source = await lastSource();
+    expect(source.closePrepared).not.toHaveBeenCalled();
+    expect(source.read).not.toHaveBeenCalled();
+    expect(h.close).toHaveBeenCalledWith(false);
+  });
+
+  it("titre jamais commencé : les morceaux de l'en-tête sont gardés sous la version du fichier, sans zone de reprise", async () => {
+    h.state = Promise.resolve({ resumeSeconds: 0 });
+    scheduleSheetHeaderWarmup("film", true);
+    await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
+    await flush();
+    const source = await lastSource();
+    expect(source.closePrepared).toHaveBeenCalledWith(KEY);
+    expect(source.read).not.toHaveBeenCalled();
+  });
+
+  it("titre en cours : la zone de reprise est lue, un morceau avant, sept au plus", async () => {
+    h.state = Promise.resolve({ resumeSeconds: 600 });
+    h.zone.mockReturnValue({ from: 40 << 20, to: (60 << 20) - 1 });
+    scheduleSheetHeaderWarmup("film", true);
+    await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
+    await flush();
+    const source = await lastSource();
+    expect(source.read.mock.calls.map((c) => (c as unknown as number[])[0] >> 20)).toEqual([39, 40, 41, 42, 43, 44, 45]);
+    expect(source.closePrepared).toHaveBeenCalledWith(KEY);
+  });
+
+  it("une position inconnue (Jellyfin muet) ne lit pas de zone", async () => {
+    h.state = Promise.resolve({ resumeSeconds: 600, positionUnknown: true });
+    h.zone.mockReturnValue({ from: 40 << 20, to: (41 << 20) - 1 });
+    scheduleSheetHeaderWarmup("film", true);
+    await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
+    await flush();
+    expect((await lastSource()).read).not.toHaveBeenCalled();
+  });
+
+  it("déjà préparé sous cette version : rouvrir la fiche ne relit rien", async () => {
+    h.prepared.add(KEY);
+    scheduleSheetHeaderWarmup("film", true);
+    await vi.advanceTimersByTimeAsync(SHEET_WARMUP_DELAY_MS);
+    await flush();
+    expect(h.open).not.toHaveBeenCalled();
   });
 });
